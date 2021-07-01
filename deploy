@@ -1,53 +1,80 @@
-#!/bin/bash
+#!/usr/bin/env python3
 
-getip () {
-	multipass info ${1} --format csv | tail -n +2 | cut -d ',' -f 3
-}
+import argparse
+import subprocess
+import sys
 
-getcmd () {
-	ssh ubuntu@${1} "sudo microk8s add-node" | head -n 2 | tail -n +2
-}
 
-if [ -z ${1} ]; then
-	echo "Usage: deploy n" 1>&2
-	exit 1
-fi
-
-# Make sure multipass is installed
-which multipass
-if [ $? -ne 0 ]; then
-	echo "Please install multipass"
-	exit 2
-fi
-
-# Deploy Ubuntu machines
-PUB_KEY=$(cat ~/.ssh/id_rsa.pub)
-cat > cloud-config.yaml <<EOF
+cloud_config = """
 #cloud-config
 users:
   - name: ubuntu
     ssh-authorized-keys:
-      - $PUB_KEY
+      - {}
     sudo: ['ALL=(ALL) NOPASSWD:ALL']
     groups: sudo
     shell: /bin/bash
 runcmd:
   - echo "AllowUsers ubuntu" >> /etc/ssh/sshd_config
   - restart ssh
-EOF
-for i in $(seq ${1}); do
-	multipass launch --name vm${i} --cloud-init cloud-config.yaml &
-done
-wait
+"""
 
-# Install microk8s
-for i in $(seq ${1}); do
-	ssh -o "StrictHostKeyChecking no" ubuntu@$(getip vm${i}) "sudo snap install microk8s --classic" &
-done
-wait
+ips = {}
 
-# Set up microk8s cluster
-for i in $(seq 2 ${1}); do
-	cmd=$(getcmd $(getip vm1))
-	ssh ubuntu@$(getip vm${i}) "sudo ${cmd}"
-done
+
+def getip(name):
+    return run(f'multipass info {name} --format csv').stdout.splitlines()[1].split(',')[2]
+
+
+def run(cmd, capture_output=True, echo=True):
+    if echo:
+        print(cmd)
+    return subprocess.run(cmd, shell=True, capture_output=capture_output, encoding='utf-8')
+
+
+def ssh_run(cmd, name):
+    print(f'ssh {name}: {cmd}')
+    return subprocess.run(f'ssh -o "StrictHostKeyChecking no" ubuntu@{ips[name]} "{cmd}"',
+                          shell=True, capture_output=True, encoding='utf-8')
+
+
+def parse_args():
+    parser = argparse.ArgumentParser()
+    parser.add_argument('-n', '--microk8s-nodes', action='store', dest='num',
+                        help='Number of microk8s nodes', default=3, type=int)
+    return parser.parse_args()
+
+
+def main():
+    args = parse_args()
+
+    # Make sure multipass is installed
+    if run("which multipass", echo=False).returncode != 0:
+        sys.stderr.write("Please install multipass")
+        sys.exit(2)
+
+    # Deploy Ubuntu machines
+    pub_key = run("cat ~/.ssh/id_rsa.pub").stdout
+    with open("cloud-config.yaml", 'w') as f:
+        f.write(cloud_config.format(pub_key))
+    for i in range(args.num):
+        # TODO Thread this
+        run(f"multipass launch --name vm{i} --cloud-init cloud-config.yaml")
+        ips[f'vm{i}'] = getip(f'vm{i}')
+
+    # Install microk8s
+    for vm in ips:
+        # TODO Thread this
+        ssh_run('sudo snap install microk8s --classic; '
+                'sudo usermod -a -G microk8s ubuntu; '
+                'sudo chown -f -R ubuntu ~/.kube', vm)
+
+    # Set up microk8s cluster
+    for i in range(1, args.num):
+        cmd = ssh_run("microk8s add-node", 'vm0').stdout
+        cmd = cmd.splitlines()[1]
+        ssh_run(f'{cmd}', f'vm{i}')
+
+
+if __name__ == '__main__':
+    main()
