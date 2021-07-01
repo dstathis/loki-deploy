@@ -1,8 +1,8 @@
 # loki-deploy
 
-Deploy an n node microk8s cluster
+Deploy a 3 node microk8s cluster
 
-    ./deploy n
+    ./deploy
 
 TODO:  
 Install loki on the microk8s cluster  
