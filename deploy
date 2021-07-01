@@ -1,0 +1,53 @@
+#!/bin/bash
+
+getip () {
+	multipass info ${1} --format csv | tail -n +2 | cut -d ',' -f 3
+}
+
+getcmd () {
+	ssh ubuntu@${1} "sudo microk8s add-node" | head -n 2 | tail -n +2
+}
+
+if [ -z ${1} ]; then
+	echo "Usage: deploy n" 1>&2
+	exit 1
+fi
+
+# Make sure multipass is installed
+which multipass
+if [ $? -ne 0 ]; then
+	echo "Please install multipass"
+	exit 2
+fi
+
+# Deploy Ubuntu machines
+PUB_KEY=$(cat ~/.ssh/id_rsa.pub)
+cat > cloud-config.yaml <<EOF
+#cloud-config
+users:
+  - name: ubuntu
+    ssh-authorized-keys:
+      - $PUB_KEY
+    sudo: ['ALL=(ALL) NOPASSWD:ALL']
+    groups: sudo
+    shell: /bin/bash
+runcmd:
+  - echo "AllowUsers ubuntu" >> /etc/ssh/sshd_config
+  - restart ssh
+EOF
+for i in $(seq ${1}); do
+	multipass launch --name vm${i} --cloud-init cloud-config.yaml &
+done
+wait
+
+# Install microk8s
+for i in $(seq ${1}); do
+	ssh -o "StrictHostKeyChecking no" ubuntu@$(getip vm${i}) "sudo snap install microk8s --classic" &
+done
+wait
+
+# Set up microk8s cluster
+for i in $(seq 2 ${1}); do
+	cmd=$(getcmd $(getip vm1))
+	ssh ubuntu@$(getip vm${i}) "sudo ${cmd}"
+done
