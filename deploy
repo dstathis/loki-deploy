@@ -42,6 +42,8 @@ def parse_args():
     parser = argparse.ArgumentParser()
     parser.add_argument('-n', '--microk8s-nodes', action='store', dest='num',
                         help='Number of microk8s nodes', default=3, type=int)
+    parser.add_argument('--vm-mem', action='store', default='4G', help='memory per vm')
+    parser.add_argument('--vm-cpus', action='store', default=2, help='cpus per vm')
     return parser.parse_args()
 
 
@@ -59,7 +61,7 @@ def main():
         f.write(cloud_config.format(pub_key))
     for i in range(args.num):
         # TODO Thread this
-        run(f"multipass launch --name vm{i} --cloud-init cloud-config.yaml")
+        run(f"multipass launch --name vm{i} --cpus {args.vm_cpus} --mem {args.vm_mem} --cloud-init cloud-config.yaml")
         ips[f'vm{i}'] = getip(f'vm{i}')
 
     # Install microk8s
