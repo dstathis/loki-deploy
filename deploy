@@ -52,7 +52,11 @@ def main():
 
     # Make sure multipass is installed
     if run("which multipass", echo=False).returncode != 0:
-        sys.stderr.write("Please install multipass")
+        sys.stderr.write("Please install multipass (snap install multipass)")
+        sys.exit(2)
+    # Make sure helm is installed
+    if run("which multipass", echo=False).returncode != 0:
+        sys.stderr.write("Please install helm (snap install helm --classic)")
         sys.exit(2)
 
     # Deploy Ubuntu machines
@@ -76,6 +80,13 @@ def main():
         cmd = ssh_run("microk8s add-node", 'vm0').stdout
         cmd = cmd.splitlines()[1]
         ssh_run(f'{cmd}', f'vm{i}')
+
+    run('helm repo add grafana https://grafana.github.io/helm-charts')
+    run('heml repo update')
+    config = ssh_run('microk8s config', 'vm0').stdout
+    with open('kubeconfig.yaml', 'w') as f:
+        f.write(config)
+    run('helm upgrade --kubeconfig kubeconfig.yaml --install loki grafana/loki-stack')
 
 
 if __name__ == '__main__':
