@@ -44,6 +44,7 @@ def parse_args():
                         help='Number of microk8s nodes', default=3, type=int)
     parser.add_argument('--vm-mem', action='store', default='4G', help='memory per vm')
     parser.add_argument('--vm-cpus', action='store', default=2, help='cpus per vm')
+    parser.add_argument('--delete', action='store_true', help='delete cluster')
     return parser.parse_args()
 
 
@@ -51,11 +52,23 @@ def main():
     args = parse_args()
 
     # Make sure multipass is installed
-    if run("which multipass", echo=False).returncode != 0:
+    if run('which multipass', echo=False).returncode != 0:
         sys.stderr.write("Please install multipass (snap install multipass)")
         sys.exit(2)
+
+    if args.delete:
+        answer = input('This will delete all vms with the name "mk8s-vm*" and purge multipass: continue? y/N\n')
+        if answer not in ['yes', 'Yes', 'Y', 'y']:
+            return
+        machines = [line.split(',')[0] for line in run('multipass list --format csv', echo=False).stdout.splitlines()[1:]]
+        for machine in machines:
+            if machine.startswith('mk8s-vm'):
+                run(f'multipass delete {machine}')
+        run('multipass purge')
+        return
+
     # Make sure helm is installed
-    if run("which multipass", echo=False).returncode != 0:
+    if run('which multipass', echo=False).returncode != 0:
         sys.stderr.write("Please install helm (snap install helm --classic)")
         sys.exit(2)
 
@@ -65,8 +78,8 @@ def main():
         f.write(cloud_config.format(pub_key))
     for i in range(args.num):
         # TODO Thread this
-        run(f"multipass launch --name vm{i} --cpus {args.vm_cpus} --mem {args.vm_mem} --cloud-init cloud-config.yaml")
-        ips[f'vm{i}'] = getip(f'vm{i}')
+        run(f"multipass launch --name mk8s-vm{i} --cpus {args.vm_cpus} --mem {args.vm_mem} --cloud-init cloud-config.yaml")
+        ips[f'mk8s-vm{i}'] = getip(f'mk8s-vm{i}')
 
     # Install microk8s
     for vm in ips:
@@ -77,19 +90,20 @@ def main():
 
     # Set up microk8s cluster
     for i in range(1, args.num):
-        cmd = ssh_run("microk8s add-node", 'vm0').stdout
+        cmd = ssh_run("microk8s add-node", 'mk8s-vm0').stdout
         cmd = cmd.splitlines()[1]
-        ssh_run(f'{cmd}', f'vm{i}')
-    ssh_run('microk8s enable dns', 'vm0')
+        ssh_run(f'{cmd}', f'mk8s-vm{i}')
+    ssh_run('microk8s enable dns', 'mk8s-vm0')
     run('helm repo add grafana https://grafana.github.io/helm-charts')
     run('heml repo update')
-    config = ssh_run('microk8s config', 'vm0').stdout
+    config = ssh_run('microk8s config', 'mk8s-vm0').stdout
     with open('kubeconfig.yaml', 'w') as f:
         f.write(config)
     run('helm install --kubeconfig kubeconfig.yaml loki grafana/loki-distributed --namespace loki --create-namespace '
         '--set ingester.replicas=3 --set querier.replicas=3 --set distributor.replicas=3')
     run('helm install --kubeconfig kubeconfig.yaml grafana grafana/grafana --namespace loki')
     run('kubectl --kubeconfig kubeconfig.yaml get secret --namespace loki grafana -o jsonpath="{.data.admin-password}" | base64 --decode ; echo', capture_output=False)
+
 
 if __name__ == '__main__':
     main()
