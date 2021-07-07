@@ -80,14 +80,16 @@ def main():
         cmd = ssh_run("microk8s add-node", 'vm0').stdout
         cmd = cmd.splitlines()[1]
         ssh_run(f'{cmd}', f'vm{i}')
-
+    ssh_run('microk8s enable dns', 'vm0')
     run('helm repo add grafana https://grafana.github.io/helm-charts')
     run('heml repo update')
     config = ssh_run('microk8s config', 'vm0').stdout
     with open('kubeconfig.yaml', 'w') as f:
         f.write(config)
-    run('helm upgrade --kubeconfig kubeconfig.yaml --install loki grafana/loki-stack')
-
+    run('helm install --kubeconfig kubeconfig.yaml loki grafana/loki-distributed --namespace loki --create-namespace '
+        '--set ingester.replicas=3 --set querier.replicas=3 --set distributor.replicas=3')
+    run('helm install --kubeconfig kubeconfig.yaml grafana grafana/grafana --namespace loki')
+    run('kubectl --kubeconfig kubeconfig.yaml get secret --namespace loki grafana -o jsonpath="{.data.admin-password}" | base64 --decode ; echo', capture_output=False)
 
 if __name__ == '__main__':
     main()
