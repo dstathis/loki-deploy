@@ -30,14 +30,15 @@ def getip(name):
 def run(cmd, capture_output=True, echo=True):
     if echo:
         print(cmd)
-    p = subprocess.run(cmd, shell=True, capture_output=capture_output, encoding='utf-8')
+    p = subprocess.run(cmd, shell=True, capture_output=capture_output, encoding='utf-8', check=True)
     return p
 
 
-def ssh_run(cmd, name):
+def ssh_run(cmd, name, capture_output=True):
     print(f'ssh {name}: {cmd}')
-    return subprocess.run(f'ssh -o "StrictHostKeyChecking no" ubuntu@{ips[name]} "{cmd}"',
-                          shell=True, capture_output=True, encoding='utf-8')
+    p =  subprocess.run(f'ssh -o "StrictHostKeyChecking no" ubuntu@{ips[name]} "{cmd}"',
+                        shell=True, capture_output=capture_output, encoding='utf-8')
+    return p
 
 
 def parse_args():
@@ -46,6 +47,9 @@ def parse_args():
                         help='Number of microk8s nodes', default=3, type=int)
     parser.add_argument('--vm-mem', action='store', default='4G', help='memory per vm')
     parser.add_argument('--vm-cpus', action='store', default=2, help='cpus per vm')
+    parser.add_argument('--ingesters', action='store', type=int, default=3, help='number of ingesters')
+    parser.add_argument('--queriers', action='store', type=int, default=3, help='number of queriers')
+    parser.add_argument('--distributors', action='store', type=int, default=3, help='number of distributors')
     parser.add_argument('--delete', action='store_true', help='delete cluster')
     return parser.parse_args()
 
@@ -58,7 +62,7 @@ def install_ubuntu(i, args):
 def install_k8s(vm):
     ssh_run('sudo snap install microk8s --classic; '
             'sudo usermod -a -G microk8s ubuntu; '
-            'sudo chown -f -R ubuntu ~/.kube', vm)
+            'sudo chown -f -R ubuntu ~/.kube', vm, capture_output=False)
 
 
 def main():
@@ -113,12 +117,13 @@ def main():
         ssh_run(f'{cmd}', f'mk8s-vm{i}')
     ssh_run('microk8s enable dns', 'mk8s-vm0')
     run('helm repo add grafana https://grafana.github.io/helm-charts')
-    run('heml repo update')
+    run('helm repo update')
     config = ssh_run('microk8s config', 'mk8s-vm0').stdout
     with open('kubeconfig.yaml', 'w') as f:
         f.write(config)
     run('helm install --kubeconfig kubeconfig.yaml loki grafana/loki-distributed --namespace loki --create-namespace '
-        '--set ingester.replicas=3 --set querier.replicas=3 --set distributor.replicas=3')
+        f'--set ingester.replicas={args.ingesters} --set querier.replicas={args.queriers} '
+        f'--set distributor.replicas={args.distributors}')
     run('helm install --kubeconfig kubeconfig.yaml grafana grafana/grafana --namespace loki')
     run('kubectl --kubeconfig kubeconfig.yaml get secret --namespace loki grafana -o jsonpath="{.data.admin-password}" | base64 --decode ; echo', capture_output=False)
 
