@@ -81,13 +81,15 @@ def parse_args():
     parser.add_argument('--distributors', action='store', type=int, default=3, help='number of distributors')
     parser.add_argument('--delete', action='store_true', help='delete cluster')
     parser.add_argument('-y', '--yes', action='store_true', help='always answer yes')
-    parser.add_argument('--public-key', action='store', default='~/.ssh/id_rsa.pub', help='public key to copy to the vms')
+    parser.add_argument('--public-key', action='store', default='~/.ssh/id_rsa.pub',
+                        help='public key to copy to the vms')
     parser.add_argument('--download-promtail', action='store_true', help='download and extract promtail then exit')
     return parser.parse_args()
 
 
 def install_ubuntu(i, args):
-    run(f"multipass launch --name mk8s-vm{i} --cpus {args.vm_cpus} --mem {args.vm_mem} --disk {args.vm_disk} --cloud-init cloud-config.yaml")
+    run(f'multipass launch --name mk8s-vm{i} --cpus {args.vm_cpus} --mem {args.vm_mem} --disk {args.vm_disk} '
+        '--cloud-init cloud-config.yaml')
     ips[f'mk8s-vm{i}'] = getip(f'mk8s-vm{i}')
 
 
@@ -111,12 +113,13 @@ def main():
             sys.stderr.write('Please install unzip (apt install unzip)')
             sys.exit(2)
 
-        promtail_url = run('curl -s https://api.github.com/repos/grafana/loki/releases/latest | grep "browser_download_url.*promtail-linux-amd64.zip" | cut -d ":" -f 2,3 | tr -d "\\"" | tr -d " "').stdout
+        promtail_url = run('curl -s https://api.github.com/repos/grafana/loki/releases/latest | '
+                           'grep "browser_download_url.*promtail-linux-amd64.zip" | '
+                           'cut -d ":" -f 2,3 | tr -d "\\"" | tr -d " "').stdout
         run(f'curl -L -o promtail-linux-amd64.zip {promtail_url}')
         run('unzip promtail-linux-amd64.zip')
         run('rm promtail-linux-amd64.zip')
         return
-
 
     if args.delete:
         if not args.yes:
@@ -125,7 +128,8 @@ def main():
             if answer not in ['yes', 'Yes', 'Y', 'y']:
                 sys.stdout.writ('Abort.\n')
                 return
-        machines = [line.split(',')[0] for line in run('multipass list --format csv', echo=False).stdout.splitlines()[1:]]
+        machines = [line.split(',')[0] for line in run('multipass list --format csv',
+                                                       echo=False).stdout.splitlines()[1:]]
         for machine in machines:
             if machine.startswith('mk8s-vm'):
                 run(f'multipass delete {machine}')
@@ -179,8 +183,10 @@ def main():
         f'--set ingester.replicas={args.ingesters} --set querier.replicas={args.queriers} '
         f'--set distributor.replicas={args.distributors}')
     run('helm install --kubeconfig kubeconfig.yaml grafana grafana/grafana --namespace loki')
-    run('kubectl --kubeconfig kubeconfig.yaml get secret --namespace loki grafana -o jsonpath="{.data.admin-password}" | base64 --decode ; echo', capture_output=False)
-    distributor_ip = run('kubectl --kubeconfig kubeconfig.yaml --namespace loki get services | grep loki-loki-distributed-distributor').stdout.split()[2]
+    run('kubectl --kubeconfig kubeconfig.yaml get secret --namespace loki grafana -o jsonpath="{.data.admin-password}"'
+        ' | base64 --decode ; echo', capture_output=False)
+    distributor_ip = run('kubectl --kubeconfig kubeconfig.yaml --namespace loki get services '
+                         '| grep loki-loki-distributed-distributor').stdout.split()[2]
     with open('promtail-config.yaml', 'w') as f:
         f.write(promtail_config.format(distributor_ip))
 
