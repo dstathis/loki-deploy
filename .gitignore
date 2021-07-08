@@ -1,3 +1,7 @@
 cloud-config.yaml
 kubeconfig.yaml
 venv/
+.flake8
+promtail-config.yaml
+promtail-linux-amd64
+promtail-linux-amd64.zip
