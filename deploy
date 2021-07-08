@@ -74,7 +74,8 @@ def parse_args():
     parser.add_argument('-n', '--microk8s-nodes', action='store', dest='num',
                         help='Number of microk8s nodes', default=3, type=int)
     parser.add_argument('--vm-mem', action='store', default='4G', help='memory per vm')
-    parser.add_argument('--vm-cpus', action='store', default=2, help='cpus per vm')
+    parser.add_argument('--vm-cpus', action='store', default=1, help='cpus per vm')
+    parser.add_argument('--vm-disk', action='store', default='20G', help='disk size per vm')
     parser.add_argument('--ingesters', action='store', type=int, default=3, help='number of ingesters')
     parser.add_argument('--queriers', action='store', type=int, default=3, help='number of queriers')
     parser.add_argument('--distributors', action='store', type=int, default=3, help='number of distributors')
@@ -86,7 +87,7 @@ def parse_args():
 
 
 def install_ubuntu(i, args):
-    run(f"multipass launch --name mk8s-vm{i} --cpus {args.vm_cpus} --mem {args.vm_mem} --cloud-init cloud-config.yaml")
+    run(f"multipass launch --name mk8s-vm{i} --cpus {args.vm_cpus} --mem {args.vm_mem} --disk {args.vm_disk} --cloud-init cloud-config.yaml")
     ips[f'mk8s-vm{i}'] = getip(f'mk8s-vm{i}')
 
 
@@ -168,7 +169,7 @@ def main():
         cmd = ssh_run("microk8s add-node", 'mk8s-vm0').stdout
         cmd = cmd.splitlines()[1]
         ssh_run(f'{cmd}', f'mk8s-vm{i}')
-    ssh_run('microk8s enable dns', 'mk8s-vm0')
+    ssh_run('microk8s enable dns storage', 'mk8s-vm0')
     run('helm repo add grafana https://grafana.github.io/helm-charts')
     run('helm repo update')
     config = ssh_run('microk8s config', 'mk8s-vm0').stdout
