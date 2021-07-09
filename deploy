@@ -85,6 +85,9 @@ def parse_args():
     parser.add_argument('--public-key', action='store', default='~/.ssh/id_rsa.pub',
                         help='public key to copy to the vms')
     parser.add_argument('--download-promtail', action='store_true', help='download and extract promtail then exit')
+    parser.add_argument('--copy-kubeconfig', action='store_true',
+                        help='copy kubeconfig.yaml to ~/.kube/config and set namespace in the current context')
+    parser.add_argument('--routes', action='store_true', help='delete existing route and add the correct new one')
     return parser.parse_args()
 
 
@@ -190,6 +193,19 @@ def main():
                          '| grep loki-loki-distributed-distributor').stdout.split()[2]
     with open('promtail-config.yaml', 'w') as f:
         f.write(promtail_config.format(distributor_ip))
+    if args.routes:
+        network = distributor_ip.split('.')
+        network[3] = '0'
+        network = '.'.join(network)
+        try:
+            run(f'sudo ip route del {network}/24')
+        except subprocess.CalledProcessError as e:
+            if not 'RTNETLINK answers: No such process' in e.stderr:
+                raise
+        run(f'sudo ip route add {network}/24 via {ips["mk8s-vm0"]}')
+    if args.copy_kubeconfig:
+        run('cp kubeconfig.yaml ~/.kube/config')
+        run('kubectl config set-context --current --namespace loki')
 
 
 if __name__ == '__main__':
