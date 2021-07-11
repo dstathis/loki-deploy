@@ -187,7 +187,7 @@ def main():
         run('kubectl config set-context --current --namespace loki')
     if args.yes or input('Reconfigure static routes to work with the new cluster? [y/N] ') in ['yes', 'Yes', 'Y', 'y']:
         kubernetes_ip = run('kubectl --kubeconfig kubeconfig.yaml --namespace default get service kubernetes '
-                            '--output custom-columns=":spec.clusterIP" --no-headers')
+                            '--output custom-columns=":spec.clusterIP" --no-headers').stdout
         network = kubernetes_ip.split('.')
         network[3] = '0'
         network = '.'.join(network)
