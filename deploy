@@ -88,6 +88,7 @@ def parse_args():
     parser.add_argument('--copy-kubeconfig', action='store_true',
                         help='copy kubeconfig.yaml to ~/.kube/config and set namespace in the current context')
     parser.add_argument('--routes', action='store_true', help='delete existing route and add the correct new one')
+    parser.add_argument('--only-k8s', action='store_true', help='just install microk8s')
     return parser.parse_args()
 
 
@@ -177,12 +178,19 @@ def main():
         cmd = ssh_run("microk8s add-node", 'mk8s-vm0').stdout
         cmd = cmd.splitlines()[1]
         ssh_run(f'{cmd}', f'mk8s-vm{i}')
-    ssh_run('microk8s enable dns storage', 'mk8s-vm0')
-    run('helm repo add grafana https://grafana.github.io/helm-charts')
-    run('helm repo update')
+    ssh_run('microk8s enable dns storage dashboard', 'mk8s-vm0')
     config = ssh_run('microk8s config', 'mk8s-vm0').stdout
     with open('kubeconfig.yaml', 'w') as f:
         f.write(config)
+    if args.yes or input('Reconfigure kubectl to point to the new cluster? [y/N] ') in ['yes', 'Yes', 'Y', 'y']:
+        run('cp kubeconfig.yaml ~/.kube/config')
+        run('kubectl config set-context --current --namespace loki')
+    if args.only_k8s:
+        return
+
+    # Install Loki
+    run('helm repo add grafana https://grafana.github.io/helm-charts')
+    run('helm repo update')
     run('helm install --kubeconfig kubeconfig.yaml loki grafana/loki-distributed --namespace loki --create-namespace '
         f'--set ingester.replicas={args.ingesters} --set querier.replicas={args.queriers} '
         f'--set distributor.replicas={args.distributors}')
@@ -193,7 +201,7 @@ def main():
                          '| grep loki-loki-distributed-distributor').stdout.split()[2]
     with open('promtail-config.yaml', 'w') as f:
         f.write(promtail_config.format(distributor_ip))
-    if args.routes:
+    if args.yes or input('Reconfigure static routes to work with the new cluster? [y/N] ') in ['yes', 'Yes', 'Y', 'y']:
         network = distributor_ip.split('.')
         network[3] = '0'
         network = '.'.join(network)
@@ -203,9 +211,6 @@ def main():
             if not 'RTNETLINK answers: No such process' in e.stderr:
                 raise
         run(f'sudo ip route add {network}/24 via {ips["mk8s-vm0"]}')
-    if args.copy_kubeconfig:
-        run('cp kubeconfig.yaml ~/.kube/config')
-        run('kubectl config set-context --current --namespace loki')
 
 
 if __name__ == '__main__':
