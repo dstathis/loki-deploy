@@ -185,6 +185,18 @@ def main():
     if args.yes or input('Reconfigure kubectl to point to the new cluster? [y/N] ') in ['yes', 'Yes', 'Y', 'y']:
         run('cp kubeconfig.yaml ~/.kube/config')
         run('kubectl config set-context --current --namespace loki')
+    if args.yes or input('Reconfigure static routes to work with the new cluster? [y/N] ') in ['yes', 'Yes', 'Y', 'y']:
+        kubernetes_ip = run('kubectl --kubeconfig kubeconfig.yaml --namespace default get service kubernetes '
+                            '--output custom-columns=":spec.clusterIP" --no-headers')
+        network = kubernetes_ip.split('.')
+        network[3] = '0'
+        network = '.'.join(network)
+        try:
+            run(f'sudo ip route del {network}/24')
+        except subprocess.CalledProcessError as e:
+            if not 'RTNETLINK answers: No such process' in e.stderr:
+                raise
+        run(f'sudo ip route add {network}/24 via {ips["mk8s-vm0"]}')
     if args.only_k8s:
         return
 
@@ -201,16 +213,6 @@ def main():
                          '| grep loki-loki-distributed-distributor').stdout.split()[2]
     with open('promtail-config.yaml', 'w') as f:
         f.write(promtail_config.format(distributor_ip))
-    if args.yes or input('Reconfigure static routes to work with the new cluster? [y/N] ') in ['yes', 'Yes', 'Y', 'y']:
-        network = distributor_ip.split('.')
-        network[3] = '0'
-        network = '.'.join(network)
-        try:
-            run(f'sudo ip route del {network}/24')
-        except subprocess.CalledProcessError as e:
-            if not 'RTNETLINK answers: No such process' in e.stderr:
-                raise
-        run(f'sudo ip route add {network}/24 via {ips["mk8s-vm0"]}')
 
 
 if __name__ == '__main__':
