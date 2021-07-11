@@ -71,7 +71,7 @@ def ssh_run(cmd, name, capture_output=True):
 
 
 def parse_args():
-    parser = argparse.ArgumentParser()
+    parser = argparse.ArgumentParser(formatter_class=argparse.ArgumentDefaultsHelpFormatter)
     parser.add_argument('-n', '--microk8s-nodes', action='store', dest='num',
                         help='Number of microk8s nodes', default=3, type=int)
     parser.add_argument('--vm-mem', action='store', default='4G', help='memory per vm')
