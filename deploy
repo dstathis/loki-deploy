@@ -182,6 +182,7 @@ def main():
     config = ssh_run('microk8s config', 'mk8s-vm0').stdout
     with open('kubeconfig.yaml', 'w') as f:
         f.write(config)
+    run('kubectl --kubeconfig kubeconfig.yaml create namespace loki')
     if args.yes or input('Reconfigure kubectl to point to the new cluster? [y/N] ') in ['yes', 'Yes', 'Y', 'y']:
         run('cp kubeconfig.yaml ~/.kube/config')
         run('kubectl config set-context --current --namespace loki')
@@ -203,7 +204,7 @@ def main():
     # Install Loki
     run('helm repo add grafana https://grafana.github.io/helm-charts')
     run('helm repo update')
-    run('helm install --kubeconfig kubeconfig.yaml loki grafana/loki-distributed --namespace loki --create-namespace '
+    run('helm install --kubeconfig kubeconfig.yaml loki grafana/loki-distributed --namespace loki '
         f'--set ingester.replicas={args.ingesters} --set querier.replicas={args.queriers} '
         f'--set distributor.replicas={args.distributors}')
     run('helm install --kubeconfig kubeconfig.yaml grafana grafana/grafana --namespace loki')
