@@ -85,9 +85,6 @@ def parse_args():
     parser.add_argument('--public-key', action='store', default='~/.ssh/id_rsa.pub',
                         help='public key to copy to the vms')
     parser.add_argument('--download-promtail', action='store_true', help='download and extract promtail then exit')
-    parser.add_argument('--copy-kubeconfig', action='store_true',
-                        help='copy kubeconfig.yaml to ~/.kube/config and set namespace in the current context')
-    parser.add_argument('--routes', action='store_true', help='delete existing route and add the correct new one')
     parser.add_argument('--only-k8s', action='store_true', help='just install microk8s')
     return parser.parse_args()
 
