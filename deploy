@@ -89,6 +89,8 @@ def parse_args():
     parser.add_argument('--only-k8s', action='store_true', help='just install microk8s')
     parser.add_argument('--kubeconfig', action='store', default='kubeconfig.yaml',
                         help='use the provided kubeconfig file rather than installing k8s')
+    parser.add_argument('--minio-mem', action='store', default='1Gi', help='Memory per minio node')
+    parser.add_argument('--minio-drives-per-node', action='store', default='2', help='Drives per minio node')
     return parser.parse_args()
 
 
@@ -206,8 +208,12 @@ def main():
 
     # Install Loki
     run('helm repo add grafana https://grafana.github.io/helm-charts')
+    run('helm repo add minio https://helm.min.io/')
     run('helm repo update')
-    run(f'helm install --kubeconfig {args.kubeconfig} --namespace loki --set mode=distributed,replicas=4 --set buckets[0].name=loki,buckets[0].policy=none,buckets[0].purge=false --set persistence.size=4Gi --set securityContext.enabled=false minio minio/minio')
+    run(f'helm install --kubeconfig {args.kubeconfig} --namespace loki minio minio/minio '
+        '--set mode=distributed,replicas=3 --set buckets[0].name=loki,buckets[0].policy=none,buckets[0].purge=false '
+        f'--set persistence.size=4Gi --set securityContext.enabled=false --set drivesPerNode={args.minio_drives_per_node} '
+        f'--set resources.requests.memory={args.minio_mem}')
     run(f'helm install --kubeconfig {args.kubeconfig} loki grafana/loki-distributed --namespace loki '
         f'--set ingester.replicas={args.ingesters} --set querier.replicas={args.queriers} '
         f'--set distributor.replicas={args.distributors} '
