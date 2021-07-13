@@ -62,8 +62,9 @@ def run(cmd, capture_output=True, echo=True):
         raise
 
 
-def ssh_run(cmd, name, capture_output=True):
-    print(f'ssh {name}: {cmd}')
+def ssh_run(cmd, name, capture_output=True, echo=True):
+    if echo:
+        print(f'ssh {name}: {cmd}')
     p = subprocess.run('ssh -o "StrictHostKeyChecking no" -o "UserKnownHostsFile /dev/null" '
                        f'ubuntu@{ips[name]} "{cmd}"',
                        shell=True, capture_output=capture_output, encoding='utf-8')
@@ -86,6 +87,8 @@ def parse_args():
                         help='public key to copy to the vms')
     parser.add_argument('--download-promtail', action='store_true', help='download and extract promtail then exit')
     parser.add_argument('--only-k8s', action='store_true', help='just install microk8s')
+    parser.add_argument('--kubeconfig', action='store', default='kubeconfig.yaml',
+                        help='use the provided kubeconfig file rather than installing k8s')
     return parser.parse_args()
 
 
@@ -148,66 +151,71 @@ def main():
         sys.stderr.write("Please install kubectl (snap install kubectl --classic)")
         sys.exit(2)
 
-    # Deploy Ubuntu machines
-    with open(os.path.expanduser(args.public_key)) as f:
-        pub_key = f.read()
-    with open("cloud-config.yaml", 'w') as f:
-        f.write(cloud_config.format(pub_key))
-    threads = []
-    for i in range(args.num):
-        thread = threading.Thread(target=install_ubuntu, args=(i, args))
-        thread.start()
-        threads.append(thread)
-    for thread in threads:
-        thread.join()
+    if not args.kubeconfig:
+        args.kubeconfig = 'kubeconfig.yaml'
+        # Deploy Ubuntu machines
+        with open(os.path.expanduser(args.public_key)) as f:
+            pub_key = f.read()
+        with open("cloud-config.yaml", 'w') as f:
+            f.write(cloud_config.format(pub_key))
+        threads = []
+        for i in range(args.num):
+            thread = threading.Thread(target=install_ubuntu, args=(i, args))
+            thread.start()
+            threads.append(thread)
+        for thread in threads:
+            thread.join()
 
-    # Install microk8s
-    threads = []
-    for vm in ips:
-        thread = threading.Thread(target=install_k8s, args=(vm,))
-        thread.start()
-        threads.append(thread)
-    for thread in threads:
-        thread.join()
+        # Install microk8s
+        threads = []
+        for vm in ips:
+            thread = threading.Thread(target=install_k8s, args=(vm,))
+            thread.start()
+            threads.append(thread)
+        for thread in threads:
+            thread.join()
 
-    # Set up microk8s cluster
-    for i in range(1, args.num):
-        cmd = ssh_run("microk8s add-node", 'mk8s-vm0').stdout
-        cmd = cmd.splitlines()[1]
-        ssh_run(f'{cmd}', f'mk8s-vm{i}')
-    ssh_run('microk8s enable dns storage dashboard', 'mk8s-vm0')
-    config = ssh_run('microk8s config', 'mk8s-vm0').stdout
-    with open('kubeconfig.yaml', 'w') as f:
-        f.write(config)
-    run('kubectl --kubeconfig kubeconfig.yaml create namespace loki')
-    if args.yes or input('Reconfigure kubectl to point to the new cluster? [y/N] ') in ['yes', 'Yes', 'Y', 'y']:
-        run('cp kubeconfig.yaml ~/.kube/config')
-        run('kubectl config set-context --current --namespace loki')
-    if args.yes or input('Reconfigure static routes to work with the new cluster? [y/N] ') in ['yes', 'Yes', 'Y', 'y']:
-        kubernetes_ip = run('kubectl --kubeconfig kubeconfig.yaml --namespace default get service kubernetes '
-                            '--output custom-columns=":spec.clusterIP" --no-headers').stdout
-        network = kubernetes_ip.split('.')
-        network[3] = '0'
-        network = '.'.join(network)
-        try:
-            run(f'sudo ip route del {network}/24')
-        except subprocess.CalledProcessError as e:
-            if not 'RTNETLINK answers: No such process' in e.stderr:
-                raise
-        run(f'sudo ip route add {network}/24 via {ips["mk8s-vm0"]}')
-    if args.only_k8s:
-        return
+        # Set up microk8s cluster
+        for i in range(1, args.num):
+            cmd = ssh_run("microk8s add-node", 'mk8s-vm0').stdout
+            cmd = cmd.splitlines()[1]
+            ssh_run(f'{cmd}', f'mk8s-vm{i}')
+        ssh_run('microk8s enable dns storage dashboard', 'mk8s-vm0')
+        ssh_run('microk8s status --wait-ready', 'mk8s-vm0', echo=False)
+        config = ssh_run('microk8s config', 'mk8s-vm0').stdout
+        with open(args.kubeconfig, 'w') as f:
+            f.write(config)
+        run(f'kubectl --kubeconfig {args.kubeconfig} create namespace loki')
+        if args.yes or input('Reconfigure kubectl to point to the new cluster? [y/N] ') in ['yes', 'Yes', 'Y', 'y']:
+            run(f'cp {args.kubeconfig} ~/.kube/config')
+            run('kubectl config set-context --current --namespace loki')
+        if args.yes or input('Reconfigure static routes to work with the new cluster? [y/N] ') in ['yes', 'Yes', 'Y', 'y']:
+            kubernetes_ip = run(f'kubectl --kubeconfig {args.kubeconfig} --namespace default get service kubernetes '
+                                '--output custom-columns=":spec.clusterIP" --no-headers').stdout
+            network = kubernetes_ip.split('.')
+            network[3] = '0'
+            network = '.'.join(network)
+            try:
+                run(f'sudo ip route del {network}/24')
+            except subprocess.CalledProcessError as e:
+                if not 'RTNETLINK answers: No such process' in e.stderr:
+                    raise
+            run(f'sudo ip route add {network}/24 via {ips["mk8s-vm0"]}')
+        if args.only_k8s:
+            return
 
     # Install Loki
     run('helm repo add grafana https://grafana.github.io/helm-charts')
     run('helm repo update')
-    run('helm install --kubeconfig kubeconfig.yaml loki grafana/loki-distributed --namespace loki '
+    run(f'helm install --kubeconfig {args.kubeconfig} --namespace loki --set mode=distributed,replicas=4 --set buckets[0].name=loki,buckets[0].policy=none,buckets[0].purge=false --set persistence.size=4Gi --set securityContext.enabled=false minio minio/minio')
+    run(f'helm install --kubeconfig {args.kubeconfig} loki grafana/loki-distributed --namespace loki '
         f'--set ingester.replicas={args.ingesters} --set querier.replicas={args.queriers} '
-        f'--set distributor.replicas={args.distributors}')
-    run('helm install --kubeconfig kubeconfig.yaml grafana grafana/grafana --namespace loki')
-    run('kubectl --kubeconfig kubeconfig.yaml get secret --namespace loki grafana -o jsonpath="{.data.admin-password}"'
+        f'--set distributor.replicas={args.distributors} '
+        '--set-file=loki.config=loki-config.yaml --values=loki-values.yaml')
+    run(f'helm install --kubeconfig {args.kubeconfig} grafana grafana/grafana --namespace loki')
+    run(f'kubectl --kubeconfig {args.kubeconfig} get secret --namespace loki grafana -o jsonpath="{{.data.admin-password}}"'
         ' | base64 --decode ; echo', capture_output=False)
-    distributor_ip = run('kubectl --kubeconfig kubeconfig.yaml --namespace loki get services '
+    distributor_ip = run(f'kubectl --kubeconfig {args.kubeconfig} --namespace loki get services '
                          '| grep loki-loki-distributed-distributor').stdout.split()[2]
     with open('promtail-config.yaml', 'w') as f:
         f.write(promtail_config.format(distributor_ip))
